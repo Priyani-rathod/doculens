@@ -1,0 +1,14 @@
+venv/
+.env
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+data/outputs/
+.DS_Store
+.env
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.streamlit/secrets.toml
+data/outputs/

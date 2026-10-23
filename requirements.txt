@@ -1,0 +1,24 @@
+# Web UI
+streamlit
+
+# Image aur PDF handling
+pillow
+opencv-python
+PyMuPDF
+
+# OCR
+pytesseract
+
+# AI (Gemini)
+google-genai
+
+# Data aur validation
+pydantic
+pandas
+openpyxl
+
+# Charts
+plotly
+
+# Config
+python-dotenv
