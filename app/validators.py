@@ -5,23 +5,23 @@ from pydantic import BaseModel
 
 from app.schema import Invoice
 
-# Rounding ki chhoti galtiyon ke liye thoda margin
+# Small margin for rounding differences
 TOLERANCE = 0.02
 
 
 class CheckResult(BaseModel):
-    check: str    # kaunsa check tha
-    status: str   # "pass", "fail", "warn" ya "skip"
-    details: str  # kya hua
+    check: str    # Name of the check
+    status: str   # "pass", "fail", "warn", or "skip"
+    details: str  # Human-readable explanation
 
 
 def _close(a: float, b: float) -> bool:
-    """Do numbers lagbhag barabar hain ya nahi."""
+    """Check if two numbers are approximately equal."""
     return abs(a - b) <= TOLERANCE
 
 
 def check_required_fields(inv: Invoice) -> List[CheckResult]:
-    """Zaroori fields maujood hain ya nahi."""
+    """Check whether required fields are present."""
     results = []
     required = {
         "vendor_name": inv.vendor_name,
@@ -30,69 +30,69 @@ def check_required_fields(inv: Invoice) -> List[CheckResult]:
     }
     for name, value in required.items():
         if value is None:
-            results.append(CheckResult(check=f"Field: {name}", status="fail", details=f"{name} missing hai"))
+            results.append(CheckResult(check=f"Field: {name}", status="fail", details=f"{name} is missing"))
         else:
-            results.append(CheckResult(check=f"Field: {name}", status="pass", details=f"{name} mil gaya"))
+            results.append(CheckResult(check=f"Field: {name}", status="pass", details=f"{name} found"))
     return results
 
 
 def check_line_items(inv: Invoice) -> List[CheckResult]:
-    """Har line: quantity x rate = amount."""
+    """Each line: quantity x rate = amount."""
     results = []
     for i, item in enumerate(inv.line_items, start=1):
         label = f"Line {i}: qty x rate"
         if item.quantity is None or item.unit_price is None or item.amount is None:
-            results.append(CheckResult(check=label, status="skip", details="Kuch value missing hai, check nahi ho sakta"))
+            results.append(CheckResult(check=label, status="skip", details="Some values are missing, cannot verify"))
             continue
         expected = round(item.quantity * item.unit_price, 2)
         if _close(expected, item.amount):
             results.append(CheckResult(check=label, status="pass", details=f"{item.quantity} x {item.unit_price} = {expected}"))
         else:
-            results.append(CheckResult(check=label, status="fail", details=f"Hona chahiye {expected}, bill mein {item.amount}"))
+            results.append(CheckResult(check=label, status="fail", details=f"Expected {expected}, bill shows {item.amount}"))
     return results
 
 
 def check_subtotal(inv: Invoice) -> CheckResult:
-    """Saari lines ka jod = subtotal."""
-    label = "Subtotal = items ka jod"
+    """Sum of all line items = subtotal."""
+    label = "Subtotal = sum of items"
     amounts = [item.amount for item in inv.line_items if item.amount is not None]
     if inv.subtotal is None or not amounts:
-        return CheckResult(check=label, status="skip", details="Subtotal ya items missing hain")
+        return CheckResult(check=label, status="skip", details="Subtotal or item amounts are missing")
     expected = round(sum(amounts), 2)
     if _close(expected, inv.subtotal):
-        return CheckResult(check=label, status="pass", details=f"Jod = {expected}")
-    return CheckResult(check=label, status="fail", details=f"Jod {expected} hai, bill mein subtotal {inv.subtotal}")
+        return CheckResult(check=label, status="pass", details=f"Sum = {expected}")
+    return CheckResult(check=label, status="fail", details=f"Sum is {expected}, bill shows subtotal {inv.subtotal}")
 
 
 def check_total(inv: Invoice) -> CheckResult:
     """Subtotal - discount + tax = total."""
     label = "Total = subtotal - discount + tax"
     if inv.subtotal is None or inv.total is None:
-        return CheckResult(check=label, status="skip", details="Subtotal ya total missing hai")
+        return CheckResult(check=label, status="skip", details="Subtotal or total is missing")
     discount = inv.discount or 0
     tax = inv.tax or 0
     expected = round(inv.subtotal - discount + tax, 2)
     if _close(expected, inv.total):
         return CheckResult(check=label, status="pass", details=f"{inv.subtotal} - {discount} + {tax} = {expected}")
-    return CheckResult(check=label, status="fail", details=f"Hona chahiye {expected}, bill mein {inv.total}")
+    return CheckResult(check=label, status="fail", details=f"Expected {expected}, bill shows {inv.total}")
 
 
 def check_signature(inv: Invoice) -> CheckResult:
-    """Signature ya stamp hai ya nahi. Missing ho to sirf warning, fail nahi."""
+    """Check for signature or stamp. Missing triggers a warning, not a failure."""
     label = "Signature / stamp"
     if inv.has_signature is None:
-        return CheckResult(check=label, status="skip", details="AI signature ke baare mein sure nahi tha")
+        return CheckResult(check=label, status="skip", details="AI could not determine if a signature is present")
     if inv.has_signature:
-        return CheckResult(check=label, status="pass", details="Signature ya stamp mil gaya")
+        return CheckResult(check=label, status="pass", details="Signature or stamp detected")
     return CheckResult(
         check=label,
         status="warn",
-        details="Signature ya stamp nahi mila. Agar ye bill signed hona chahiye tha, to dhyan do.",
+        details="No signature or stamp found. Please verify if this document requires one.",
     )
 
 
 def run_all_checks(inv: Invoice) -> List[CheckResult]:
-    """Saare checks ek saath chalao."""
+    """Run all validation checks together."""
     results = []
     results += check_required_fields(inv)
     results += check_line_items(inv)
@@ -106,7 +106,6 @@ if __name__ == "__main__":
     from app.config import SAMPLES_DIR
     from app.vlm import extract_invoice
 
-    # Command line se file do, ya samples folder ki pehli file lo
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
     else:

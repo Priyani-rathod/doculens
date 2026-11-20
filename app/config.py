@@ -30,7 +30,7 @@ def _get_secret(name: str):
 GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
 
 # Model ka naam (.env mein GEMINI_MODEL likh ke bhi badal sakti ho)
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 
 def check_config():
