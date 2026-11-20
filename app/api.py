@@ -1,108 +1,73 @@
-"""
-api.py
-------
-FastAPI backend for DocuLens.
-Run from project root: uvicorn app.api:app --reload --port 8000
-"""
-import tempfile
 import time
-from pathlib import Path
-from typing import List
-
+from typing import Any, List, Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.analytics import bill_insights, portfolio_analytics
-from app.config import GEMINI_MODEL
+from app.config import MODEL_NAME
+from app.vlm import extract_invoice
+from app.validators import validate_invoice, generate_insights
 from app.duplicates import find_duplicates
-from app.schema import Invoice
-from app.validators import run_all_checks
-from app.vlm import MIME_TYPES, extract_invoice
+from app.analytics import compute_portfolio
 
-app = FastAPI(title="DocuLens API", version="1.0.0")
+app = FastAPI(title="DocuLens API")
 
-# Allow local React dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class BillRecord(BaseModel):
+class BillItem(BaseModel):
     key: str
     name: str
-    invoice: Invoice
+    invoice: dict[str, Any]
 
 
 class BillsPayload(BaseModel):
-    bills: List[BillRecord]
+    bills: List[BillItem]
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model": GEMINI_MODEL}
+    return {"status": "ok", "model": MODEL_NAME}
 
 
 @app.post("/api/analyze")
-async def analyze_bill(file: UploadFile = File(...)):
-    filename = file.filename or "document"
-    suffix = Path(filename).suffix.lower()
-    if suffix not in MIME_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {suffix}. Allowed: {', '.join(MIME_TYPES.keys())}",
-        )
-
-    content = await file.read()
-    key = f"{filename}-{len(content)}"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+async def analyze(file: UploadFile = File(...)):
     start = time.time()
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file uploaded.")
 
     try:
-        tmp.write(content)
-        tmp.close()
-
-        invoice = extract_invoice(tmp.name)
-        if invoice is None:
-            raise ValueError("Could not extract valid data from AI. Please try a clearer image.")
-
-        checks = run_all_checks(invoice)
-        insights = bill_insights(invoice)
+        invoice = extract_invoice(content, file.filename or "bill", file.content_type or "")
+        checks = validate_invoice(invoice)
+        insights = generate_insights(invoice)
+        elapsed = round(time.time() - start, 2)
 
         return {
-            "key": key,
-            "name": filename,
-            "invoice": invoice.model_dump(),
-            "checks": [c.model_dump() for c in checks],
+            "key": f"{file.filename}_{len(content)}",
+            "name": file.filename,
+            "invoice": invoice.model_dump() if hasattr(invoice, "model_dump") else invoice,
+            "checks": checks,
             "insights": insights,
-            "elapsed": round(time.time() - start, 2),
+            "elapsed": elapsed,
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)[:300])
-    finally:
-        Path(tmp.name).unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/duplicates")
-def check_duplicates(payload: BillsPayload):
-    records = [
-        {"key": b.key, "name": b.name, "invoice": b.invoice}
-        for b in payload.bills
-    ]
-    dups = find_duplicates(records)
-    return {"duplicates": dups}
+def duplicates(payload: BillsPayload):
+    bills_data = [b.model_dump() for b in payload.bills]
+    return {"duplicates": find_duplicates(bills_data)}
 
 
 @app.post("/api/portfolio")
-def get_portfolio(payload: BillsPayload):
-    records = [
-        {"key": b.key, "name": b.name, "invoice": b.invoice}
-        for b in payload.bills
-    ]
-    return portfolio_analytics(records)
+def portfolio(payload: BillsPayload):
+    bills_data = [b.model_dump() for b in payload.bills]
+    return compute_portfolio(bills_data)
